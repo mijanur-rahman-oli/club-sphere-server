@@ -1,7 +1,7 @@
 require('dotenv').config()
 const express = require('express')
 const cors = require('cors')
-const { MongoClient, ServerApiVersion } = require('mongodb')
+const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb')
 const port = process.env.PORT || 3000
 // const admin = require('firebase-admin')
 // const decoded = Buffer.from(process.env.FB_SERVICE_KEY, 'base64').toString(
@@ -78,6 +78,40 @@ async function run() {
       const result = await clubCollection.find().toArray()
       res.send(result)
     })
+
+    // get all plants from db
+    app.get('/clubs/:id', async (req, res) => {
+      const id = req.params.id
+      const result = await clubCollection.findOne({ _id: new ObjectId(id) })
+      res.send(result)
+    })
+
+
+// app.get('/clubs/:id', async (req, res) => {
+//   const id = req.params.id
+//   const result = await clubCollection.findOne({ _id: new ObjectId(id) })
+
+//   if (!result) return res.status(404).send({ message: 'Not found' })
+
+//   // Convert fields to simple JSON
+//   const clubData = {
+//     _id: result._id.toString(),
+//     image: result.image,
+//     name: result.name,
+//     description: result.description,
+//     category: result.category,
+//     quantity: parseInt(result.quantity?.$numberInt || 0),
+//     price: parseInt(result.price?.$numberInt || 0),
+//     seller: {
+//       name: result.seller?.name || null,
+//       image: result.seller?.image || null,
+//       email: result.seller?.email || 'Unknown',
+//     },
+//   }
+
+//   res.send(clubData)
+// })
+
 
 
     // Send a ping to confirm a successful connection
