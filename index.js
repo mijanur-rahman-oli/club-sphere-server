@@ -124,7 +124,7 @@ async function run() {
 // UPDATED - Payment checkout endpoint
 app.post('/create-checkout-session', async (req, res) => {
   const paymentInfo = req.body
-  console.log('💳 Creating checkout session for:', paymentInfo)
+  console.log('Creating checkout session for:', paymentInfo)
 
   try {
     const session = await stripe.checkout.sessions.create({
@@ -174,14 +174,14 @@ app.get('/verify-payment/:sessionId', async (req, res) => {
   try {
     // Retrieve the Stripe session
     const session = await stripe.checkout.sessions.retrieve(sessionId)
-    console.log('✅ Stripe session retrieved:', {
+    console.log('Stripe session retrieved:', {
       id: session.id,
       payment_status: session.payment_status,
       metadata: session.metadata
     })
 
     if (session.payment_status === 'paid') {
-      console.log('💰 Payment confirmed as paid')
+      console.log('Payment confirmed as paid')
 
       // Check if booking already exists
       const existingBooking = await bookingCollection.findOne({
@@ -189,7 +189,7 @@ app.get('/verify-payment/:sessionId', async (req, res) => {
       })
 
       if (existingBooking) {
-        console.log('⚠️ Booking already exists:', existingBooking._id)
+        console.log('Booking already exists:', existingBooking._id)
         return res.send({ 
           success: true, 
           session, 
@@ -198,7 +198,7 @@ app.get('/verify-payment/:sessionId', async (req, res) => {
         })
       }
 
-      console.log('📝 Creating new booking...')
+      console.log('Creating new booking...')
 
       // Fetch club details
       const club = await clubCollection.findOne({
@@ -206,11 +206,11 @@ app.get('/verify-payment/:sessionId', async (req, res) => {
       })
 
       if (!club) {
-        console.log('❌ Club not found:', session.metadata.clubId)
+        console.log('Club not found:', session.metadata.clubId)
         return res.status(404).send({ error: 'Club not found' })
       }
 
-      console.log('✅ Club found:', club.name)
+      console.log('Club found:', club.name)
 
       // Reconstruct seller object from metadata
       const seller = {
@@ -239,11 +239,11 @@ app.get('/verify-payment/:sessionId', async (req, res) => {
         createdAt: new Date(),
       }
 
-      console.log('📦 Booking data prepared:', JSON.stringify(bookingData, null, 2))
+      console.log('Booking data prepared:', JSON.stringify(bookingData, null, 2))
 
       const result = await bookingCollection.insertOne(bookingData)
-      console.log('✅ Booking saved successfully! ID:', result.insertedId)
-      console.log('✅ Inserted into collection: bookings')
+      console.log('Booking saved successfully! ID:', result.insertedId)
+      console.log('Inserted into collection: bookings')
 
       res.send({ 
         success: true, 
@@ -252,7 +252,7 @@ app.get('/verify-payment/:sessionId', async (req, res) => {
         message: 'Booking created successfully'
       })
     } else {
-      console.log('❌ Payment not completed. Status:', session.payment_status)
+      console.log('Payment not completed. Status:', session.payment_status)
       res.send({ 
         success: false, 
         session, 
@@ -260,11 +260,22 @@ app.get('/verify-payment/:sessionId', async (req, res) => {
       })
     }
   } catch (error) {
-    console.error('❌ Payment verification error:', error)
+    console.error('Payment verification error:', error)
     console.error('Error stack:', error.stack)
     res.status(500).send({ error: error.message })
   }
 })
+
+app.get('/my-orders/:email', async (req, res) => {
+  const email = req.params.email
+
+  const result = await bookingCollection
+    .find({ 'customer.email': email })
+    .toArray()
+
+  res.send(result)
+})
+
 
     // Send a ping to confirm a successful connection
     await client.db('admin').command({ ping: 1 })
