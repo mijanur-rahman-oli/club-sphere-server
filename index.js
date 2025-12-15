@@ -1,7 +1,9 @@
 require('dotenv').config()
 const express = require('express')
+require('dotenv').config();
 const cors = require('cors')
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb')
+const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY)
 const port = process.env.PORT || 3000
 // const admin = require('firebase-admin')
 // const decoded = Buffer.from(process.env.FB_SERVICE_KEY, 'base64').toString(
@@ -12,11 +14,7 @@ const port = process.env.PORT || 3000
 //   credential: admin.credential.cert(serviceAccount),
 // })
 
-require('dotenv').config();
 const admin = require('firebase-admin');
-
-// This automatically reads the file if GOOGLE_APPLICATION_CREDENTIALS is set
-// OR you can explicitly do:
 const serviceAccount = require('./serviceAccountKey.json');
 
 admin.initializeApp({
@@ -27,11 +25,7 @@ const app = express()
 // middleware
 app.use(
   cors({
-    origin: [
-      'http://localhost:5173',
-      'http://localhost:5174',
-      'https://b12-m11-session.web.app',
-    ],
+    origin: [process.env.CLIENT_DOMAIN],
     credentials: true,
     optionSuccessStatus: 200,
   })
@@ -86,31 +80,84 @@ async function run() {
       res.send(result)
     })
 
+    // UNCOMMENT AND ADD THIS - Payment checkout endpoint
+    app.post('/create-checkout-session', async (req, res) => {
+      const paymentInfo = req.body
+      console.log(paymentInfo)
+      
+      try {
+        const session = await stripe.checkout.sessions.create({
+          line_items: [
+            {
+              price_data: {
+                currency: 'usd',
+                product_data: {
+                  name: paymentInfo?.name,
+                  description: paymentInfo?.description,
+                  images: [paymentInfo.image],
+                },
+                unit_amount: Math.round(paymentInfo?.price * 100),
+              },
+              quantity: paymentInfo?.quantity || 1,
+            },
+          ],
+          customer_email: paymentInfo?.customer?.email,
+          mode: 'payment',
+          metadata: {
+            clubId: paymentInfo?.clubId,
+            customerEmail: paymentInfo?.customer?.email,
+            customerName: paymentInfo?.customer?.name,
+            sellerId: paymentInfo?.seller?.email || '',
+          },
+          success_url: `${process.env.CLIENT_DOMAIN}/payment-success?session_id={CHECKOUT_SESSION_ID}`,
+          cancel_url: `${process.env.CLIENT_DOMAIN}/club/${paymentInfo?.clubId}`,
+        })
+        
+        res.send({ url: session.url })
+      } catch (error) {
+        console.error('Stripe error:', error)
+        res.status(500).send({ error: error.message })
+      }
+    })
 
-// app.get('/clubs/:id', async (req, res) => {
-//   const id = req.params.id
-//   const result = await clubCollection.findOne({ _id: new ObjectId(id) })
-
-//   if (!result) return res.status(404).send({ message: 'Not found' })
-
-//   // Convert fields to simple JSON
-//   const clubData = {
-//     _id: result._id.toString(),
-//     image: result.image,
-//     name: result.name,
-//     description: result.description,
-//     category: result.category,
-//     quantity: parseInt(result.quantity?.$numberInt || 0),
-//     price: parseInt(result.price?.$numberInt || 0),
-//     seller: {
-//       name: result.seller?.name || null,
-//       image: result.seller?.image || null,
-//       email: result.seller?.email || 'Unknown',
-//     },
-//   }
-
-//   res.send(clubData)
-// })
+    // ADD THIS - Payment verification endpoint
+    app.get('/verify-payment/:sessionId', async (req, res) => {
+      const { sessionId } = req.params
+      
+      try {
+        const session = await stripe.checkout.sessions.retrieve(sessionId)
+        
+        if (session.payment_status === 'paid') {
+          // Check if booking already exists
+          const existingBooking = await bookingCollection.findOne({ 
+            sessionId: session.id 
+          })
+          
+          if (!existingBooking) {
+            // Save booking to database
+            const bookingData = {
+              sessionId: session.id,
+              clubId: session.metadata.clubId,
+              customerEmail: session.metadata.customerEmail,
+              customerName: session.metadata.customerName,
+              amount: session.amount_total / 100,
+              currency: session.currency,
+              paymentStatus: session.payment_status,
+              createdAt: new Date(),
+            }
+            
+            await bookingCollection.insertOne(bookingData)
+          }
+          
+          res.send({ success: true, session })
+        } else {
+          res.send({ success: false, session })
+        }
+      } catch (error) {
+        console.error('Payment verification error:', error)
+        res.status(500).send({ error: error.message })
+      }
+    })
 
 
 
