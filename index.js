@@ -54,6 +54,7 @@ async function run() {
     const db = client.db('clubSphere')
     const clubCollection = db.collection('clubs')
     const bookingCollection = db.collection('bookings')
+    const usersCollection = db.collection('users')
 
     // Add new club
     app.post('/clubs', async (req, res) => {
@@ -159,11 +160,11 @@ async function run() {
 
           if (existingBooking) {
             console.log('Booking already exists:', existingBooking._id)
-            return res.send({ 
-              success: true, 
-              session, 
+            return res.send({
+              success: true,
+              session,
               message: 'Booking already recorded',
-              bookingId: existingBooking._id 
+              bookingId: existingBooking._id
             })
           }
 
@@ -213,18 +214,18 @@ async function run() {
           const result = await bookingCollection.insertOne(bookingData)
           console.log('Booking saved successfully! ID:', result.insertedId)
 
-          res.send({ 
-            success: true, 
-            session, 
+          res.send({
+            success: true,
+            session,
             bookingId: result.insertedId,
             message: 'Booking created successfully'
           })
         } else {
           console.log('Payment not completed. Status:', session.payment_status)
-          res.send({ 
-            success: false, 
-            session, 
-            message: 'Payment not completed' 
+          res.send({
+            success: false,
+            session,
+            message: 'Payment not completed'
           })
         }
       } catch (error) {
@@ -238,11 +239,11 @@ async function run() {
       try {
         const email = req.params.email
         console.log('Fetching orders for customer:', email)
-        
+
         const result = await bookingCollection
           .find({ 'customer.email': email })
           .toArray()
-        
+
         console.log('Found customer orders:', result.length)
         res.send(result)
       } catch (error) {
@@ -256,14 +257,14 @@ async function run() {
       try {
         const email = req.params.email
         console.log('Fetching orders for seller:', email)
-        
+
         const result = await bookingCollection
           .find({ 'seller.email': email })
           .toArray()
-        
+
         console.log('Found seller orders:', result.length)
         console.log('Orders data:', JSON.stringify(result, null, 2))
-        
+
         res.status(200).send(result)
       } catch (error) {
         console.error('Error fetching seller orders:', error)
@@ -272,15 +273,15 @@ async function run() {
     })
 
     // Get User Inventory
-        app.get('/my-inventory/:email', async (req, res) => {
+    app.get('/my-inventory/:email', async (req, res) => {
       try {
         const email = req.params.email
         console.log('🔍 Fetching inventory for user:', email)
-        
+
         const result = await clubCollection
           .find({ 'seller.email': email })
           .toArray()
-        
+
         console.log('📦 Found clubs in inventory:', result.length)
         res.send(result)
       } catch (error) {
@@ -291,206 +292,241 @@ async function run() {
 
     // Add this endpoint to your backend (inside the run() function, after other routes)
 
-// Cancel/Delete order
-app.delete('/orders/:id', async (req, res) => {
-  try {
-    const id = req.params.id
-    console.log('Cancelling order:', id)
-    
-    // First check if order exists
-    const order = await bookingCollection.findOne({ _id: new ObjectId(id) })
-    
-    if (!order) {
-      return res.status(404).send({ error: 'Order not found' })
-    }
-    
-    // Check if order is already completed
-    if (order.status === 'completed') {
-      return res.status(400).send({ error: 'Cannot cancel completed orders' })
-    }
-    
-    // Update order status to cancelled instead of deleting
-    const result = await bookingCollection.updateOne(
-      { _id: new ObjectId(id) },
-      { 
-        $set: { 
-          status: 'cancelled',
-          cancelledAt: new Date()
-        } 
+    // Cancel/Delete order
+    app.delete('/orders/:id', async (req, res) => {
+      try {
+        const id = req.params.id
+        console.log('Cancelling order:', id)
+
+        // First check if order exists
+        const order = await bookingCollection.findOne({ _id: new ObjectId(id) })
+
+        if (!order) {
+          return res.status(404).send({ error: 'Order not found' })
+        }
+
+        // Check if order is already completed
+        if (order.status === 'completed') {
+          return res.status(400).send({ error: 'Cannot cancel completed orders' })
+        }
+
+        // Update order status to cancelled instead of deleting
+        const result = await bookingCollection.updateOne(
+          { _id: new ObjectId(id) },
+          {
+            $set: {
+              status: 'cancelled',
+              cancelledAt: new Date()
+            }
+          }
+        )
+
+        console.log('Order cancelled successfully:', id)
+        res.send({ success: true, message: 'Order cancelled successfully' })
+      } catch (error) {
+        console.error('Error cancelling order:', error)
+        res.status(500).send({ error: error.message })
       }
-    )
-    
-    console.log('Order cancelled successfully:', id)
-    res.send({ success: true, message: 'Order cancelled successfully' })
-  } catch (error) {
-    console.error('Error cancelling order:', error)
-    res.status(500).send({ error: error.message })
-  }
-})
+    })
 
-// Add this endpoint to your backend (inside the run() function, after other routes)
+    // Add this endpoint to your backend (inside the run() function, after other routes)
 
-// Cancel/Delete order (Customer)
-app.delete('/orders/:id', async (req, res) => {
-  try {
-    const id = req.params.id
-    console.log('Cancelling order:', id)
-    
-    // First check if order exists
-    const order = await bookingCollection.findOne({ _id: new ObjectId(id) })
-    
-    if (!order) {
-      return res.status(404).send({ error: 'Order not found' })
-    }
-    
-    // Check if order is already completed
-    if (order.status === 'completed') {
-      return res.status(400).send({ error: 'Cannot cancel completed orders' })
-    }
-    
-    // Update order status to cancelled instead of deleting
-    const result = await bookingCollection.updateOne(
-      { _id: new ObjectId(id) },
-      { 
-        $set: { 
-          status: 'cancelled',
-          cancelledAt: new Date()
-        } 
+    // Cancel/Delete order (Customer)
+    app.delete('/orders/:id', async (req, res) => {
+      try {
+        const id = req.params.id
+        console.log('Cancelling order:', id)
+
+        // First check if order exists
+        const order = await bookingCollection.findOne({ _id: new ObjectId(id) })
+
+        if (!order) {
+          return res.status(404).send({ error: 'Order not found' })
+        }
+
+        // Check if order is already completed
+        if (order.status === 'completed') {
+          return res.status(400).send({ error: 'Cannot cancel completed orders' })
+        }
+
+        // Update order status to cancelled instead of deleting
+        const result = await bookingCollection.updateOne(
+          { _id: new ObjectId(id) },
+          {
+            $set: {
+              status: 'cancelled',
+              cancelledAt: new Date()
+            }
+          }
+        )
+
+        console.log('Order cancelled successfully:', id)
+        res.send({ success: true, message: 'Order cancelled successfully' })
+      } catch (error) {
+        console.error('Error cancelling order:', error)
+        res.status(500).send({ error: error.message })
       }
-    )
-    
-    console.log('Order cancelled successfully:', id)
-    res.send({ success: true, message: 'Order cancelled successfully' })
-  } catch (error) {
-    console.error('Error cancelling order:', error)
-    res.status(500).send({ error: error.message })
-  }
-})
+    })
 
-// Update order status (Seller)
-app.patch('/orders/:id', async (req, res) => {
-  try {
-    const id = req.params.id
-    const { status } = req.body
-    console.log('Updating order status:', id, 'to', status)
-    
-    // Validate status
-    const validStatuses = ['confirmed', 'processing', 'completed', 'cancelled']
-    if (!validStatuses.includes(status)) {
-      return res.status(400).send({ error: 'Invalid status value' })
-    }
-    
-    // Check if order exists
-    const order = await bookingCollection.findOne({ _id: new ObjectId(id) })
-    
-    if (!order) {
-      return res.status(404).send({ error: 'Order not found' })
-    }
-    
-    // Update order status
-    const updateData = { 
-      status,
-      updatedAt: new Date()
-    }
-    
-    // Add completion timestamp if status is completed
-    if (status === 'completed') {
-      updateData.completedAt = new Date()
-    }
-    
-    const result = await bookingCollection.updateOne(
-      { _id: new ObjectId(id) },
-      { $set: updateData }
-    )
-    
-    console.log('Order status updated successfully:', id)
-    res.send({ success: true, message: 'Order status updated successfully' })
-  } catch (error) {
-    console.error('Error updating order status:', error)
-    res.status(500).send({ error: error.message })
-  }
-})
-// Add these endpoints to your backend (inside the run() function, after other club routes)
+    // Update order status (Seller)
+    app.patch('/orders/:id', async (req, res) => {
+      try {
+        const id = req.params.id
+        const { status } = req.body
+        console.log('Updating order status:', id, 'to', status)
 
-// Update club
-app.patch('/clubs/:id', async (req, res) => {
-  try {
-    const id = req.params.id
-    const clubData = req.body
-    console.log('Updating club:', id)
-    
-    // Remove _id from update data if present
-    delete clubData._id
-    
-    // Check if club exists
-    const existingClub = await clubCollection.findOne({ _id: new ObjectId(id) })
-    
-    if (!existingClub) {
-      return res.status(404).send({ error: 'Club not found' })
-    }
-    
-    // Update club
-    const result = await clubCollection.updateOne(
-      { _id: new ObjectId(id) },
-      { 
-        $set: {
-          ...clubData,
+        // Validate status
+        const validStatuses = ['confirmed', 'processing', 'completed', 'cancelled']
+        if (!validStatuses.includes(status)) {
+          return res.status(400).send({ error: 'Invalid status value' })
+        }
+
+        // Check if order exists
+        const order = await bookingCollection.findOne({ _id: new ObjectId(id) })
+
+        if (!order) {
+          return res.status(404).send({ error: 'Order not found' })
+        }
+
+        // Update order status
+        const updateData = {
+          status,
           updatedAt: new Date()
-        } 
-      }
-    )
-    
-    if (result.modifiedCount === 0) {
-      return res.status(400).send({ error: 'No changes made to club' })
-    }
-    
-    console.log('Club updated successfully:', id)
-    res.send({ success: true, message: 'Club updated successfully' })
-  } catch (error) {
-    console.error('Error updating club:', error)
-    res.status(500).send({ error: error.message })
-  }
-})
+        }
 
-// Delete club
-app.delete('/clubs/:id', async (req, res) => {
-  try {
-    const id = req.params.id
-    console.log('Deleting club:', id)
-    
-    // Check if club exists
-    const club = await clubCollection.findOne({ _id: new ObjectId(id) })
-    
-    if (!club) {
-      return res.status(404).send({ error: 'Club not found' })
-    }
-    
-    // Check if there are any active bookings for this club
-    const activeBookings = await bookingCollection.findOne({
-      clubId: id,
-      status: { $nin: ['cancelled', 'completed'] }
+        // Add completion timestamp if status is completed
+        if (status === 'completed') {
+          updateData.completedAt = new Date()
+        }
+
+        const result = await bookingCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: updateData }
+        )
+
+        console.log('Order status updated successfully:', id)
+        res.send({ success: true, message: 'Order status updated successfully' })
+      } catch (error) {
+        console.error('Error updating order status:', error)
+        res.status(500).send({ error: error.message })
+      }
     })
-    
-    if (activeBookings) {
-      return res.status(400).send({ 
-        error: 'Cannot delete club with active bookings. Please complete or cancel all bookings first.' 
-      })
-    }
-    
-    // Delete the club
-    const result = await clubCollection.deleteOne({ _id: new ObjectId(id) })
-    
-    console.log('Club deleted successfully:', id)
-    res.send({ 
-      success: true, 
-      message: 'Club deleted successfully',
-      deletedCount: result.deletedCount 
+    // Add these endpoints to your backend (inside the run() function, after other club routes)
+
+    // Update club
+    app.patch('/clubs/:id', async (req, res) => {
+      try {
+        const id = req.params.id
+        const clubData = req.body
+        console.log('Updating club:', id)
+
+        // Remove _id from update data if present
+        delete clubData._id
+
+        // Check if club exists
+        const existingClub = await clubCollection.findOne({ _id: new ObjectId(id) })
+
+        if (!existingClub) {
+          return res.status(404).send({ error: 'Club not found' })
+        }
+
+        // Update club
+        const result = await clubCollection.updateOne(
+          { _id: new ObjectId(id) },
+          {
+            $set: {
+              ...clubData,
+              updatedAt: new Date()
+            }
+          }
+        )
+
+        if (result.modifiedCount === 0) {
+          return res.status(400).send({ error: 'No changes made to club' })
+        }
+
+        console.log('Club updated successfully:', id)
+        res.send({ success: true, message: 'Club updated successfully' })
+      } catch (error) {
+        console.error('Error updating club:', error)
+        res.status(500).send({ error: error.message })
+      }
     })
-  } catch (error) {
-    console.error('Error deleting club:', error)
-    res.status(500).send({ error: error.message })
-  }
-})
+
+    // Delete club
+    app.delete('/clubs/:id', async (req, res) => {
+      try {
+        const id = req.params.id
+        console.log('Deleting club:', id)
+
+        // Check if club exists
+        const club = await clubCollection.findOne({ _id: new ObjectId(id) })
+
+        if (!club) {
+          return res.status(404).send({ error: 'Club not found' })
+        }
+
+        // Check if there are any active bookings for this club
+        const activeBookings = await bookingCollection.findOne({
+          clubId: id,
+          status: { $nin: ['cancelled', 'completed'] }
+        })
+
+        if (activeBookings) {
+          return res.status(400).send({
+            error: 'Cannot delete club with active bookings. Please complete or cancel all bookings first.'
+          })
+        }
+
+        // Delete the club
+        const result = await clubCollection.deleteOne({ _id: new ObjectId(id) })
+
+        console.log('Club deleted successfully:', id)
+        res.send({
+          success: true,
+          message: 'Club deleted successfully',
+          deletedCount: result.deletedCount
+        })
+      } catch (error) {
+        console.error('Error deleting club:', error)
+        res.status(500).send({ error: error.message })
+      }
+    })
+
+    // save or update a user in db
+    app.post('/user', async (req, res) => {
+      const userData = req.body
+      userData.created_at = new Date().toISOString()
+      userData.last_loggedIn = new Date().toISOString()
+      userData.role = 'customer'
+
+      const query = {
+        email: userData.email,
+      }
+
+      const alreadyExists = await usersCollection.findOne(query)
+      console.log('User Already Exists---> ', !!alreadyExists)
+
+      if (alreadyExists) {
+        console.log('Updating user info......')
+        const result = await usersCollection.updateOne(query, {
+          $set: {
+            last_loggedIn: new Date().toISOString(),
+          },
+        })
+        return res.send(result)
+      }
+
+      console.log('Saving new user info......')
+      const result = await usersCollection.insertOne(userData)
+      res.send(result)
+    })
+
+    // get a user's role
+    app.get('/user/role', verifyJWT, async (req, res) => {
+      const result = await usersCollection.findOne({ email: req.tokenEmail })
+      res.send({ role: result?.role })
+    })
 
 
     // Ping MongoDB
