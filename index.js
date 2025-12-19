@@ -567,6 +567,16 @@ app.get('/my-inventory', verifyJWT, verifySELLER, async (req, res) => {
       res.send(result)
     })
 
+    
+    // get all users for admin
+    app.get('/users', verifyJWT, verifyADMIN, async (req, res) => {
+      const adminEmail = req.tokenEmail
+      const result = await usersCollection
+        .find({ email: { $ne: adminEmail } })
+        .toArray()
+      res.send(result)
+    })
+
 
 
 run().catch(console.dir)
