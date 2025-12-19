@@ -547,6 +547,27 @@ app.get('/my-inventory', verifyJWT, verifySELLER, async (req, res) => {
       res.send(result)
     })
 
+    
+
+    // get all manager requests for admin
+    app.get('/manager-requests', verifyJWT, verifyADMIN, async (req, res) => {
+      const result = await managerRequestsCollection.find().toArray()
+      res.send(result)
+    })
+
+    // update a user's role
+    app.patch('/update-role', verifyJWT, verifyADMIN, async (req, res) => {
+      const { email, role } = req.body
+      const result = await usersCollection.updateOne(
+        { email },
+        { $set: { role } }
+      )
+      await managerRequestsCollection.deleteOne({ email })
+
+      res.send(result)
+    })
+
+
 
 run().catch(console.dir)
 
