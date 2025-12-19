@@ -525,15 +525,6 @@ app.get('/my-inventory', verifyJWT, verifySELLER, async (req, res) => {
       res.send({ role: result?.role })
     })
 
-
-    // Ping MongoDB
-    await client.db('admin').command({ ping: 1 })
-    console.log('✅ Pinged your deployment. You successfully connected to MongoDB!')
-  } finally {
-    // Keep connection open
-  }
-}
-
     // save become-seller request
     app.post('/become-manager', verifyJWT, async (req, res) => {
       const email = req.tokenEmail
@@ -773,14 +764,6 @@ app.get('/manager/upcoming-events', verifyJWT, verifySELLER, async (req, res) =>
   }
 })
 
-
-
-
-    // Manager Statistics Routes
-
-
-
-
 // Get pending requests
 app.get('/manager/pending-requests', verifyJWT, verifySELLER, async (req, res) => {
   try {
@@ -881,7 +864,13 @@ app.get('/admin/bookings', verifyJWT, verifyADMIN, async (req, res) => {
     res.status(500).send({ error: error.message })
   }
 })
-
+    // Ping MongoDB
+    await client.db('admin').command({ ping: 1 })
+    console.log('✅ Pinged your deployment. You successfully connected to MongoDB!')
+  } finally {
+    // Keep connection open
+  }
+}
 
 run().catch(console.dir)
 
