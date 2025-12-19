@@ -775,6 +775,114 @@ app.get('/manager/upcoming-events', verifyJWT, verifySELLER, async (req, res) =>
 
 
 
+
+    // Manager Statistics Routes
+
+
+
+
+// Get pending requests
+app.get('/manager/pending-requests', verifyJWT, verifySELLER, async (req, res) => {
+  try {
+    const email = req.tokenEmail
+    console.log('Fetching pending requests for manager:', email)
+
+    // Get all clubs managed by this user
+    const managedClubs = await clubCollection
+      .find({ 'seller.email': email })
+      .toArray()
+
+    const clubIds = managedClubs.map(club => club._id.toString())
+
+    // Get processing bookings
+    const processingBookings = await bookingCollection
+      .find({ 
+        clubId: { $in: clubIds },
+        status: 'processing'
+      })
+      .sort({ createdAt: -1 })
+      .toArray()
+
+    // Format requests
+    const requests = processingBookings.map(booking => {
+      const date = new Date(booking.createdAt)
+      const now = new Date()
+      const diffTime = Math.abs(now - date)
+      const diffHours = Math.floor(diffTime / (1000 * 60 * 60))
+      const diffDays = Math.floor(diffHours / 24)
+      
+      let timeAgo
+      if (diffDays > 0) {
+        timeAgo = `${diffDays} day${diffDays > 1 ? 's' : ''} ago`
+      } else if (diffHours > 0) {
+        timeAgo = `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`
+      } else {
+        timeAgo = 'Just now'
+      }
+
+      return {
+        type: 'Booking Request',
+        description: `${booking.customer?.name} wants to join ${booking.name}`,
+        timestamp: timeAgo,
+        bookingId: booking._id,
+        customerEmail: booking.customer?.email
+      }
+    })
+
+    console.log('Pending requests:', requests.length)
+    res.send(requests)
+  } catch (error) {
+    console.error('Error fetching pending requests:', error)
+    res.status(500).send({ error: error.message })
+  }
+})
+
+// Approve/Reject pending request
+app.patch('/manager/requests/:id', verifyJWT, verifySELLER, async (req, res) => {
+  try {
+    const { id } = req.params
+    const { action } = req.body // 'approve' or 'reject'
+    const email = req.tokenEmail
+
+    // Find the booking
+    const booking = await bookingCollection.findOne({ _id: new ObjectId(id) })
+
+    if (!booking) {
+      return res.status(404).send({ error: 'Request not found' })
+    }
+
+    // Verify manager owns this club
+    const club = await clubCollection.findOne({ _id: new ObjectId(booking.clubId) })
+    if (club.seller?.email !== email) {
+      return res.status(403).send({ error: 'Unauthorized' })
+    }
+
+    // Update status
+    const newStatus = action === 'approve' ? 'confirmed' : 'cancelled'
+    await bookingCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: { status: newStatus, updatedAt: new Date() } }
+    )
+
+    res.send({ success: true, message: `Request ${action}d successfully` })
+  } catch (error) {
+    console.error('Error handling request:', error)
+    res.status(500).send({ error: error.message })
+  }
+})
+
+// Get all bookings (Admin only)
+app.get('/admin/bookings', verifyJWT, verifyADMIN, async (req, res) => {
+  try {
+    const result = await bookingCollection.find({}).toArray()
+    res.send(result)
+  } catch (error) {
+    console.error('Error fetching all bookings:', error)
+    res.status(500).send({ error: error.message })
+  }
+})
+
+
 run().catch(console.dir)
 
 app.get('/', (req, res) => {
