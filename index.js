@@ -709,6 +709,70 @@ app.get('/manager/statistics', verifyJWT, verifySELLER, async (req, res) => {
   }
 })
 
+// Get manager's clubs
+app.get('/manager/clubs', verifyJWT, verifySELLER, async (req, res) => {
+  try {
+    const email = req.tokenEmail
+    console.log('Fetching clubs for manager:', email)
+
+    const clubs = await clubCollection
+      .find({ 'seller.email': email })
+      .toArray()
+
+    res.send(clubs)
+  } catch (error) {
+    console.error('Error fetching manager clubs:', error)
+    res.status(500).send({ error: error.message })
+  }
+})
+
+// Get upcoming events (next 7 bookings)
+app.get('/manager/upcoming-events', verifyJWT, verifySELLER, async (req, res) => {
+  try {
+    const email = req.tokenEmail
+    console.log('Fetching upcoming events for manager:', email)
+
+    // Get all clubs managed by this user
+    const managedClubs = await clubCollection
+      .find({ 'seller.email': email })
+      .toArray()
+
+    const clubIds = managedClubs.map(club => club._id.toString())
+
+    // Get confirmed bookings
+    const bookings = await bookingCollection
+      .find({ 
+        clubId: { $in: clubIds },
+        status: 'confirmed'
+      })
+      .sort({ createdAt: -1 })
+      .limit(7)
+      .toArray()
+
+    // Format events
+    const events = bookings.map(booking => {
+      const date = new Date(booking.createdAt)
+      const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+      
+      return {
+        title: `${booking.name} Session`,
+        clubName: booking.name,
+        date: `${monthNames[date.getMonth()]} ${date.getDate()}`,
+        time: date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
+        registeredCount: 1,
+        capacity: 30,
+        bookingId: booking._id
+      }
+    })
+
+    console.log('Upcoming events:', events.length)
+    res.send(events)
+  } catch (error) {
+    console.error('Error fetching upcoming events:', error)
+    res.status(500).send({ error: error.message })
+  }
+})
+
 
 
 run().catch(console.dir)
