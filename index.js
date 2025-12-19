@@ -577,6 +577,138 @@ app.get('/my-inventory', verifyJWT, verifySELLER, async (req, res) => {
       res.send(result)
     })
 
+    
+// Get manager statistics
+app.get('/manager/statistics', verifyJWT, verifySELLER, async (req, res) => {
+  try {
+    const email = req.tokenEmail
+    console.log('Fetching statistics for manager:', email)
+
+    // Get all clubs managed by this user
+    const managedClubs = await clubCollection
+      .find({ 'seller.email': email })
+      .toArray()
+
+    const clubIds = managedClubs.map(club => club._id.toString())
+
+    // Get all bookings for managed clubs
+    const allBookings = await bookingCollection
+      .find({ clubId: { $in: clubIds } })
+      .toArray()
+
+    // Calculate date ranges
+    const now = new Date()
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1)
+    const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1)
+    const endOfLastMonth = new Date(now.getFullYear(), now.getMonth(), 0)
+    const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
+
+    // Total members (unique customers who made bookings)
+    const uniqueCustomers = [...new Set(allBookings.map(b => b.customer?.email))].filter(Boolean)
+    const totalMembers = uniqueCustomers.length
+
+    // New members this month
+    const newMembersThisMonth = allBookings.filter(
+      b => new Date(b.createdAt) >= startOfMonth
+    ).length
+
+    // New members last month
+    const newMembersLastMonth = allBookings.filter(
+      b => new Date(b.createdAt) >= startOfLastMonth && new Date(b.createdAt) <= endOfLastMonth
+    ).length
+
+    // Calculate trends
+    const membersTrend = newMembersLastMonth > 0
+      ? Math.round(((newMembersThisMonth - newMembersLastMonth) / newMembersLastMonth) * 100)
+      : 0
+
+    const newMembersTrend = membersTrend
+
+    // Active events (confirmed and processing bookings)
+    const activeEvents = allBookings.filter(
+      b => b.status === 'confirmed' || b.status === 'processing'
+    ).length
+
+    // Upcoming events (confirmed bookings)
+    const upcomingEvents = allBookings.filter(b => b.status === 'confirmed').length
+
+    // Pending requests (processing status)
+    const pendingRequests = allBookings.filter(b => b.status === 'processing').length
+
+    // Attendance rate (completed vs total)
+    const completedBookings = allBookings.filter(b => b.status === 'completed').length
+    const averageAttendance = allBookings.length > 0
+      ? Math.round((completedBookings / allBookings.length) * 100)
+      : 0
+
+    // Attendance trend
+    const completedThisMonth = allBookings.filter(
+      b => b.status === 'completed' && new Date(b.completedAt || b.createdAt) >= startOfMonth
+    ).length
+    const completedLastMonth = allBookings.filter(
+      b => b.status === 'completed' && 
+      new Date(b.completedAt || b.createdAt) >= startOfLastMonth && 
+      new Date(b.completedAt || b.createdAt) <= endOfLastMonth
+    ).length
+    const attendanceTrend = completedLastMonth > 0
+      ? Math.round(((completedThisMonth - completedLastMonth) / completedLastMonth) * 100)
+      : 0
+
+    // Growth rate (last 30 days)
+    const bookingsLast30Days = allBookings.filter(
+      b => new Date(b.createdAt) >= thirtyDaysAgo
+    ).length
+    const bookingsPrevious30Days = allBookings.filter(
+      b => {
+        const date = new Date(b.createdAt)
+        const sixtyDaysAgo = new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000)
+        return date >= sixtyDaysAgo && date < thirtyDaysAgo
+      }
+    ).length
+    const growthRate = bookingsPrevious30Days > 0
+      ? Math.round(((bookingsLast30Days - bookingsPrevious30Days) / bookingsPrevious30Days) * 100)
+      : 0
+
+    // Total event hours (assuming 2 hours per event)
+    const totalEventHours = completedBookings * 2
+
+    // Event completion rate
+    const eventCompletionRate = allBookings.length > 0
+      ? Math.round((completedBookings / allBookings.length) * 100)
+      : 0
+
+    // Performance data
+    const performanceData = {
+      memberGrowth: membersTrend > 0 ? membersTrend : 0,
+      eventSuccess: eventCompletionRate,
+      engagement: averageAttendance
+    }
+
+    const statistics = {
+      totalMembers,
+      totalClubs: managedClubs.length,
+      activeEvents,
+      upcomingEvents,
+      newMembersThisMonth,
+      pendingRequests,
+      averageAttendance,
+      growthRate,
+      totalEventHours,
+      eventCompletionRate,
+      membersTrend,
+      newMembersTrend,
+      attendanceTrend,
+      performanceData
+    }
+
+    console.log('Manager statistics:', statistics)
+    res.send(statistics)
+  } catch (error) {
+    console.error('Error fetching manager statistics:', error)
+    res.status(500).send({ error: error.message })
+  }
+})
+
 
 
 run().catch(console.dir)
