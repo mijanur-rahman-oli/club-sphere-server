@@ -19,7 +19,7 @@ app.use(
   cors({
     origin: [process.env.CLIENT_DOMAIN],
     credentials: true,
-    optionSuccessStatus: 200,
+    optionsSuccessStatus: 200,
   })
 )
 app.use(express.json())
@@ -55,9 +55,34 @@ async function run() {
     const clubCollection = db.collection('clubs')
     const bookingCollection = db.collection('bookings')
     const usersCollection = db.collection('users')
+    const managerRequestsCollection = db.collection('managerRequests')
+
+
+    // role middlewares
+    const verifyADMIN = async (req, res, next) => {
+      const email = req.tokenEmail
+      const user = await usersCollection.findOne({ email })
+      if (user?.role !== 'admin')
+        return res
+          .status(403)
+          .send({ message: 'Admin only Actions!', role: user?.role })
+
+      next()
+    }
+
+    const verifySELLER = async (req, res, next) => {
+      const email = req.tokenEmail
+      const user = await usersCollection.findOne({ email })
+      if (user?.role !== 'manager')
+        return res
+          .status(403)
+          .send({ message: 'Seller only Actions!', role: user?.role })
+
+      next()
+    }
 
     // Add new club
-    app.post('/clubs', async (req, res) => {
+    app.post('/clubs', verifyJWT, verifySELLER, async (req, res) => {
       try {
         const clubData = req.body
         const result = await clubCollection.insertOne(clubData)
@@ -234,10 +259,10 @@ async function run() {
       }
     })
 
-    // Get customer orders
-    app.get('/my-orders/:email', async (req, res) => {
+    // Get customer orders (with JWT verification)
+    app.get('/my-orders', verifyJWT, async (req, res) => {
       try {
-        const email = req.params.email
+        const email = req.tokenEmail
         console.log('Fetching orders for customer:', email)
 
         const result = await bookingCollection
@@ -252,118 +277,91 @@ async function run() {
       }
     })
 
-    // Get seller orders
-    app.get('/manage-orders/:email', async (req, res) => {
-      try {
-        const email = req.params.email
-        console.log('Fetching orders for seller:', email)
+  // Get seller orders (SECURED - use JWT email)
+app.get('/manage-orders', verifyJWT, verifySELLER, async (req, res) => {
+  try {
+    const email = req.tokenEmail // Get email from JWT token
+    console.log('Fetching orders for seller:', email)
 
-        const result = await bookingCollection
-          .find({ 'seller.email': email })
-          .toArray()
+    const result = await bookingCollection
+      .find({ 'seller.email': email })
+      .toArray()
 
-        console.log('Found seller orders:', result.length)
-        console.log('Orders data:', JSON.stringify(result, null, 2))
+    console.log('Found seller orders:', result.length)
+    console.log('Orders data:', JSON.stringify(result, null, 2))
 
-        res.status(200).send(result)
-      } catch (error) {
-        console.error('Error fetching seller orders:', error)
-        res.status(500).send({ error: error.message })
-      }
-    })
+    res.status(200).send(result)
+  } catch (error) {
+    console.error('Error fetching seller orders:', error)
+    res.status(500).send({ error: error.message })
+  }
+})
 
-    // Get User Inventory
-    app.get('/my-inventory/:email', async (req, res) => {
-      try {
-        const email = req.params.email
-        console.log('🔍 Fetching inventory for user:', email)
+// Get User Inventory (SECURED - use JWT email)
+app.get('/my-inventory', verifyJWT, verifySELLER, async (req, res) => {
+  try {
+    const email = req.tokenEmail // Get email from JWT token
+    console.log('🔍 Fetching inventory for user:', email)
 
-        const result = await clubCollection
-          .find({ 'seller.email': email })
-          .toArray()
+    const result = await clubCollection
+      .find({ 'seller.email': email })
+      .toArray()
 
-        console.log('📦 Found clubs in inventory:', result.length)
-        res.send(result)
-      } catch (error) {
-        console.error('❌ Error fetching inventory:', error)
-        res.status(500).send({ error: error.message })
-      }
-    })
-
-    // Add this endpoint to your backend (inside the run() function, after other routes)
-
-    // Cancel/Delete order
-    app.delete('/orders/:id', async (req, res) => {
+    console.log('📦 Found clubs in inventory:', result.length)
+    res.send(result)
+  } catch (error) {
+    console.error('❌ Error fetching inventory:', error)
+    res.status(500).send({ error: error.message })
+  }
+})
+    // Cancel/Delete order (with JWT verification)
+    app.delete('/orders/:id', verifyJWT, async (req, res) => {
       try {
         const id = req.params.id
-        console.log('Cancelling order:', id)
+        const userEmail = req.tokenEmail
+        console.log('Cancelling order:', id, 'by user:', userEmail)
 
         // First check if order exists
         const order = await bookingCollection.findOne({ _id: new ObjectId(id) })
 
         if (!order) {
+          console.log('Order not found:', id)
           return res.status(404).send({ error: 'Order not found' })
+        }
+
+        console.log('Order found:', {
+          orderId: order._id,
+          customerEmail: order.customer?.email,
+          status: order.status
+        })
+
+        // Verify that the user is the customer or seller
+        const isCustomer = order.customer?.email === userEmail
+        const isSeller = order.seller?.email === userEmail
+
+        if (!isCustomer && !isSeller) {
+          console.log('Unauthorized: User not customer or seller')
+          return res.status(403).send({ error: 'Unauthorized to cancel this order' })
         }
 
         // Check if order is already completed
         if (order.status === 'completed') {
+          console.log('Cannot cancel completed order')
           return res.status(400).send({ error: 'Cannot cancel completed orders' })
         }
 
-        // Update order status to cancelled instead of deleting
-        const result = await bookingCollection.updateOne(
-          { _id: new ObjectId(id) },
-          {
-            $set: {
-              status: 'cancelled',
-              cancelledAt: new Date()
-            }
-          }
-        )
+        // Delete the order completely
+        const result = await bookingCollection.deleteOne({ _id: new ObjectId(id) })
 
-        console.log('Order cancelled successfully:', id)
-        res.send({ success: true, message: 'Order cancelled successfully' })
+        console.log('Order deleted successfully:', id, 'deletedCount:', result.deletedCount)
+        res.send({
+          success: true,
+          message: 'Order deleted successfully',
+          deletedCount: result.deletedCount
+        })
       } catch (error) {
-        console.error('Error cancelling order:', error)
-        res.status(500).send({ error: error.message })
-      }
-    })
-
-    // Add this endpoint to your backend (inside the run() function, after other routes)
-
-    // Cancel/Delete order (Customer)
-    app.delete('/orders/:id', async (req, res) => {
-      try {
-        const id = req.params.id
-        console.log('Cancelling order:', id)
-
-        // First check if order exists
-        const order = await bookingCollection.findOne({ _id: new ObjectId(id) })
-
-        if (!order) {
-          return res.status(404).send({ error: 'Order not found' })
-        }
-
-        // Check if order is already completed
-        if (order.status === 'completed') {
-          return res.status(400).send({ error: 'Cannot cancel completed orders' })
-        }
-
-        // Update order status to cancelled instead of deleting
-        const result = await bookingCollection.updateOne(
-          { _id: new ObjectId(id) },
-          {
-            $set: {
-              status: 'cancelled',
-              cancelledAt: new Date()
-            }
-          }
-        )
-
-        console.log('Order cancelled successfully:', id)
-        res.send({ success: true, message: 'Order cancelled successfully' })
-      } catch (error) {
-        console.error('Error cancelling order:', error)
+        console.error('Error deleting order:', error)
+        console.error('Error stack:', error.stack)
         res.status(500).send({ error: error.message })
       }
     })
@@ -411,7 +409,6 @@ async function run() {
         res.status(500).send({ error: error.message })
       }
     })
-    // Add these endpoints to your backend (inside the run() function, after other club routes)
 
     // Update club
     app.patch('/clubs/:id', async (req, res) => {
@@ -498,7 +495,7 @@ async function run() {
       const userData = req.body
       userData.created_at = new Date().toISOString()
       userData.last_loggedIn = new Date().toISOString()
-      userData.role = 'customer'
+      userData.role = 'member'
 
       const query = {
         email: userData.email,
@@ -537,9 +534,21 @@ async function run() {
   }
 }
 
+    // save become-seller request
+    app.post('/become-manager', verifyJWT, async (req, res) => {
+      const email = req.tokenEmail
+      const alreadyExists = await managerRequestsCollection.findOne({ email })
+      if (alreadyExists)
+        return res
+          .status(409)
+          .send({ message: 'Already requested.' })
+
+      const result = await managerRequestsCollection.insertOne({ email })
+      res.send(result)
+    })
+
+
 run().catch(console.dir)
-
-
 
 app.get('/', (req, res) => {
   res.send('Hello from ClubSphere Server!')
