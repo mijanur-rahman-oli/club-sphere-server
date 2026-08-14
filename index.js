@@ -196,7 +196,7 @@ async function run() {
                 product_data: {
                   name: paymentInfo?.name,
                   description: paymentInfo?.description,
-                  images: paymentInfo?.image ? [paymentInfo.image] : [],
+                 images: [paymentInfo?.image].filter(url => typeof url === 'string' && url.trim().length > 0),
                 },
                 unit_amount: Math.round(paymentInfo?.price * 100),
               },
