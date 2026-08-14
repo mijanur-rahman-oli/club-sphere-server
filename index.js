@@ -20,11 +20,9 @@ admin.initializeApp({
   credential: admin.credential.cert(serviceAccount)
 })
 
-// 6. Initialize Express App & Middleware
 const app = express()
 app.use(cors())
-app.use(express.json()) // Required to parse incoming JSON payloads (like Stripe webhooks or API requests)
-
+app.use(express.json())
 // Middleware
 app.use(
   cors({
