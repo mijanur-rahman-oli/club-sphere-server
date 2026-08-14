@@ -15,10 +15,33 @@ const port = process.env.PORT || 3000
 dns.setServers(["1.1.1.1", "8.8.8.8"]);
 
 
-const serviceAccount = require('./serviceAccountKey.json')
+// const serviceAccount = require('./serviceAccountKey.json')
+// admin.initializeApp({
+//   credential: admin.credential.cert(serviceAccount)
+// })
+
+// Initialize Firebase Admin with environment variable
+let serviceAccount;
+
+if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+  // For Vercel deployment - decode from base64
+  const decoded = Buffer.from(process.env.FIREBASE_SERVICE_ACCOUNT, 'base64').toString('utf-8');
+  serviceAccount = JSON.parse(decoded);
+  console.log('✅ Firebase loaded from environment variable');
+} else {
+  // For local development - load from file
+  try {
+    serviceAccount = require('./serviceAccountKey.json');
+    console.log('✅ Firebase loaded from local file');
+  } catch (err) {
+    console.error('❌ Failed to load service account:', err.message);
+    throw new Error('Service account not found!');
+  }
+}
+
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount)
-})
+});
 
 const app = express()
 app.use(cors())
