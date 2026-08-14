@@ -1,9 +1,9 @@
-node_modules
+# Remove duplicates and clean up
+echo "node_modules
 .env
 .git
 README.md
-.gitignore
 *.log
 .DS_Store
 serviceKeyConverter.js
-serviceAccountKey.json 
+serviceAccountKey.json" > .gitignore
