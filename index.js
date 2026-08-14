@@ -1,23 +1,38 @@
-const express = require('express')
 require('dotenv').config()
+
+
+const express = require('express')
 const cors = require('cors')
+const dns = require('dns')
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb')
+const admin = require('firebase-admin')
+
+
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY)
 const port = process.env.PORT || 3000
 
-const admin = require('firebase-admin')
-const serviceAccount = require('./serviceAccountKey.json')
 
+dns.setServers(["1.1.1.1", "8.8.8.8"]);
+
+
+const serviceAccount = require('./serviceAccountKey.json')
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount)
 })
 
+// 6. Initialize Express App & Middleware
 const app = express()
+app.use(cors())
+app.use(express.json()) // Required to parse incoming JSON payloads (like Stripe webhooks or API requests)
 
 // Middleware
 app.use(
   cors({
-    origin: [process.env.CLIENT_DOMAIN],
+    origin: [
+      process.env.CLIENT_DOMAIN || 'http://localhost:5173',
+      'http://localhost:5173',
+      'http://localhost:3000'
+    ],
     credentials: true,
     optionsSuccessStatus: 200,
   })
@@ -27,16 +42,20 @@ app.use(express.json())
 // JWT middleware
 const verifyJWT = async (req, res, next) => {
   const token = req?.headers?.authorization?.split(' ')[1]
-  console.log(token)
-  if (!token) return res.status(401).send({ message: 'Unauthorized Access!' })
+  console.log('Token received:', token ? 'Yes' : 'No')
+  
+  if (!token) {
+    return res.status(401).send({ message: 'Unauthorized Access - No token!' })
+  }
+  
   try {
     const decoded = await admin.auth().verifyIdToken(token)
     req.tokenEmail = decoded.email
-    console.log(decoded)
+    console.log('Decoded token email:', decoded.email)
     next()
   } catch (err) {
-    console.log(err)
-    return res.status(401).send({ message: 'Unauthorized Access!', err })
+    console.log('Token verification error:', err)
+    return res.status(401).send({ message: 'Unauthorized Access - Invalid token!', error: err.message })
   }
 }
 
@@ -144,12 +163,31 @@ async function run() {
       }
     })
 
-    // Create checkout session
+    // Create checkout session (club purchases AND paid event registrations)
     app.post('/create-checkout-session', async (req, res) => {
       const paymentInfo = req.body
-      console.log('Creating checkout session for:', paymentInfo)
+      const type = paymentInfo?.type || 'club' // 'club' | 'event'
+      console.log('Creating checkout session:', type, paymentInfo)
 
       try {
+        const metadata = {
+          type,
+          customerEmail: paymentInfo?.customer?.email,
+          customerName: paymentInfo?.customer?.name,
+          customerImage: paymentInfo?.customer?.image || '',
+        }
+
+        if (type === 'club') {
+          metadata.clubId = paymentInfo?.clubId
+          metadata.sellerEmail = paymentInfo?.seller?.email || ''
+          metadata.sellerName = paymentInfo?.seller?.name || ''
+          metadata.sellerImage = paymentInfo?.seller?.image || ''
+        }
+
+        if (type === 'event') {
+          metadata.eventId = paymentInfo?.eventId
+        }
+
         const session = await stripe.checkout.sessions.create({
           line_items: [
             {
@@ -158,7 +196,7 @@ async function run() {
                 product_data: {
                   name: paymentInfo?.name,
                   description: paymentInfo?.description,
-                  images: [paymentInfo.image],
+                  images: paymentInfo?.image ? [paymentInfo.image] : [],
                 },
                 unit_amount: Math.round(paymentInfo?.price * 100),
               },
@@ -167,17 +205,12 @@ async function run() {
           ],
           customer_email: paymentInfo?.customer?.email,
           mode: 'payment',
-          metadata: {
-            clubId: paymentInfo?.clubId,
-            customerEmail: paymentInfo?.customer?.email,
-            customerName: paymentInfo?.customer?.name,
-            customerImage: paymentInfo?.customer?.image || '',
-            sellerEmail: paymentInfo?.seller?.email || '',
-            sellerName: paymentInfo?.seller?.name || '',
-            sellerImage: paymentInfo?.seller?.image || '',
-          },
-          success_url: `${process.env.CLIENT_DOMAIN}/payment-success?session_id={CHECKOUT_SESSION_ID}`,
-          cancel_url: `${process.env.CLIENT_DOMAIN}/club/${paymentInfo?.clubId}`,
+          metadata,
+          success_url: `${process.env.CLIENT_DOMAIN}/payment-success?session_id={CHECKOUT_SESSION_ID}&type=${type}`,
+          cancel_url:
+            type === 'event'
+              ? `${process.env.CLIENT_DOMAIN}/event`
+              : `${process.env.CLIENT_DOMAIN}/club/${paymentInfo?.clubId}`,
         })
 
         console.log('Checkout session created:', session.id)
@@ -188,98 +221,134 @@ async function run() {
       }
     })
 
-    // Verify payment and create booking
+    // Verify payment and create booking (club) or registration (event)
     app.get('/verify-payment/:sessionId', async (req, res) => {
       const { sessionId } = req.params
       console.log('Verifying payment for session:', sessionId)
 
       try {
-        // Retrieve the Stripe session
         const session = await stripe.checkout.sessions.retrieve(sessionId)
-        console.log('Stripe session retrieved:', {
-          id: session.id,
-          payment_status: session.payment_status,
-          metadata: session.metadata
-        })
+        const type = session.metadata?.type || 'club'
+        console.log('Stripe session retrieved:', { id: session.id, payment_status: session.payment_status, type })
 
-        if (session.payment_status === 'paid') {
-          console.log('Payment confirmed as paid')
+        if (session.payment_status !== 'paid') {
+          console.log('Payment not completed. Status:', session.payment_status)
+          return res.send({ success: false, session, type, message: 'Payment not completed' })
+        }
 
-          // Check if booking already exists
-          const existingBooking = await bookingCollection.findOne({
-            sessionId: session.id
-          })
-
-          if (existingBooking) {
-            console.log('Booking already exists:', existingBooking._id)
+        // ---------- EVENT REGISTRATION FLOW ----------
+        if (type === 'event') {
+          // Idempotency: already processed this exact session
+          const existingBySession = await eventRegistrationsCollection.findOne({ sessionId: session.id })
+          if (existingBySession) {
             return res.send({
               success: true,
               session,
-              message: 'Booking already recorded',
-              bookingId: existingBooking._id
+              type,
+              message: 'Registration already recorded',
+              registrationId: existingBySession._id,
             })
           }
 
-          console.log('Creating new booking...')
+          const eventId = session.metadata.eventId
+          const event = await eventsCollection.findOne({ _id: new ObjectId(eventId) })
+          if (!event) {
+            return res.status(404).send({ error: 'Event not found' })
+          }
 
-          // Fetch club details
-          const club = await clubCollection.findOne({
-            _id: new ObjectId(session.metadata.clubId)
+          // Guard against double-registering the same user for the same event
+          const alreadyRegistered = await eventRegistrationsCollection.findOne({
+            eventId,
+            userEmail: session.metadata.customerEmail,
+            status: { $ne: 'cancelled' },
           })
-
-          if (!club) {
-            console.log('Club not found:', session.metadata.clubId)
-            return res.status(404).send({ error: 'Club not found' })
+          if (alreadyRegistered) {
+            return res.send({
+              success: true,
+              session,
+              type,
+              message: 'Already registered for this event',
+              registrationId: alreadyRegistered._id,
+            })
           }
 
-          console.log('Club found:', club.name)
-
-          // Reconstruct seller object from metadata
-          const seller = {
-            email: session.metadata.sellerEmail || club.seller?.email,
-            name: session.metadata.sellerName || club.seller?.name,
-            image: session.metadata.sellerImage || club.seller?.image,
-          }
-
-          // Save booking to database
-          const bookingData = {
+          const registration = {
+            eventId,
+            userEmail: session.metadata.customerEmail,
+            customerName: session.metadata.customerName,
+            status: 'registered',
             sessionId: session.id,
-            clubId: session.metadata.clubId,
             transactionId: session.payment_intent,
-            customer: {
-              name: session.metadata.customerName,
-              email: session.metadata.customerEmail,
-              image: session.metadata.customerImage,
-            },
-            status: 'confirmed',
-            seller: seller,
-            name: club.name,
-            category: club.category,
-            quantity: 1,
-            price: session.amount_total / 100,
-            image: club.image,
-            createdAt: new Date(),
+            amountPaid: session.amount_total / 100,
+            registeredAt: new Date(),
           }
 
-          console.log('Booking data prepared:', JSON.stringify(bookingData, null, 2))
+          const result = await eventRegistrationsCollection.insertOne(registration)
+          console.log('Event registration saved:', result.insertedId)
 
-          const result = await bookingCollection.insertOne(bookingData)
-          console.log('Booking saved successfully! ID:', result.insertedId)
-
-          res.send({
+          return res.send({
             success: true,
             session,
-            bookingId: result.insertedId,
-            message: 'Booking created successfully'
-          })
-        } else {
-          console.log('Payment not completed. Status:', session.payment_status)
-          res.send({
-            success: false,
-            session,
-            message: 'Payment not completed'
+            type,
+            message: 'Registered and payment confirmed',
+            registrationId: result.insertedId,
           })
         }
+
+        // ---------- CLUB BOOKING FLOW (unchanged from before) ----------
+        const existingBooking = await bookingCollection.findOne({ sessionId: session.id })
+        if (existingBooking) {
+          console.log('Booking already exists:', existingBooking._id)
+          return res.send({
+            success: true,
+            session,
+            type,
+            message: 'Booking already recorded',
+            bookingId: existingBooking._id
+          })
+        }
+
+        const club = await clubCollection.findOne({ _id: new ObjectId(session.metadata.clubId) })
+        if (!club) {
+          console.log('Club not found:', session.metadata.clubId)
+          return res.status(404).send({ error: 'Club not found' })
+        }
+
+        const seller = {
+          email: session.metadata.sellerEmail || club.seller?.email,
+          name: session.metadata.sellerName || club.seller?.name,
+          image: session.metadata.sellerImage || club.seller?.image,
+        }
+
+        const bookingData = {
+          sessionId: session.id,
+          clubId: session.metadata.clubId,
+          transactionId: session.payment_intent,
+          customer: {
+            name: session.metadata.customerName,
+            email: session.metadata.customerEmail,
+            image: session.metadata.customerImage,
+          },
+          status: 'confirmed',
+          seller,
+          name: club.name,
+          category: club.category,
+          quantity: 1,
+          price: session.amount_total / 100,
+          image: club.image,
+          createdAt: new Date(),
+        }
+
+        const result = await bookingCollection.insertOne(bookingData)
+        console.log('Booking saved successfully! ID:', result.insertedId)
+
+        res.send({
+          success: true,
+          session,
+          type,
+          bookingId: result.insertedId,
+          message: 'Booking created successfully'
+        })
       } catch (error) {
         console.error('Payment verification error:', error)
         res.status(500).send({ error: error.message })
@@ -550,6 +619,38 @@ async function run() {
     app.get('/user/role', verifyJWT, async (req, res) => {
       const result = await usersCollection.findOne({ email: req.tokenEmail })
       res.send({ role: result?.role })
+    })
+
+    // Update user's profile info (name, photoURL) — keeps MongoDB in sync with Firebase Auth
+    app.patch('/users/:email', verifyJWT, async (req, res) => {
+      try {
+        const { email } = req.params
+        const { name, photoURL } = req.body
+
+        // Only allow users to update their own profile
+        if (req.tokenEmail !== email) {
+          return res.status(403).send({ message: 'Forbidden: You can only update your own profile' })
+        }
+
+        const updateData = { updatedAt: new Date() }
+        if (name !== undefined) updateData.name = name
+        if (photoURL !== undefined) updateData.photoURL = photoURL
+
+        const result = await usersCollection.updateOne(
+          { email },
+          { $set: updateData }
+        )
+
+        if (result.matchedCount === 0) {
+          return res.status(404).send({ message: 'User not found' })
+        }
+
+        console.log('User profile updated successfully:', email)
+        res.send({ success: true, message: 'Profile updated successfully', modifiedCount: result.modifiedCount })
+      } catch (error) {
+        console.error('Error updating user profile:', error)
+        res.status(500).send({ error: error.message })
+      }
     })
 
     // save become-seller request
@@ -990,6 +1091,7 @@ app.get('/events', async (req, res) => {
       }
     })
 
+    // Register for a FREE event only — paid events must go through the checkout flow
     app.post('/events/:id/register', verifyJWT, async (req, res) => {
       try {
         const eventId = req.params.id
@@ -997,6 +1099,10 @@ app.get('/events', async (req, res) => {
 
         const event = await eventsCollection.findOne({ _id: new ObjectId(eventId) })
         if (!event) return res.status(404).send({ error: 'Event not found' })
+
+        if (event.isPaid) {
+          return res.status(400).send({ error: 'This event requires payment. Please use the checkout flow.' })
+        }
 
         // Check if already registered
         const existing = await eventRegistrationsCollection.findOne({ eventId, userEmail })
@@ -1295,71 +1401,6 @@ app.get('/events', async (req, res) => {
       }
     });
 
-    // app.post('/clubs/:id/join', verifyJWT, async (req, res) => {
-    //   try {
-    //     const clubId = req.params.id;
-    //     const userEmail = req.tokenEmail;
-
-    //     if (!userEmail) {
-    //       return res.status(401).send({ message: 'Unauthorized' });
-    //     }
-
-    //     // Find club
-    //     const club = await clubCollection.findOne({ _id: new ObjectId(clubId) });
-    //     if (!club) {
-    //       return res.status(404).send({ message: 'Club not found' });
-    //     }
-    //     if (club.price > 0) {
-    //       return res.status(400).send({ message: 'This club requires payment' });
-    //     }
-
-    //     // Check if already a member
-    //     const existing = await bookingCollection.findOne({
-    //       clubId: clubId,
-    //       'customer.email': userEmail,
-    //     });
-    //     if (existing) {
-    //       return res.status(409).send({ message: 'You are already a member of this club' });
-    //     }
-
-    //     // Fetch user details for rich customer info
-    //     const userData = await usersCollection.findOne({ email: userEmail });
-
-    //     const customerInfo = {
-    //       email: userEmail,
-    //       name: userData?.name || userData?.displayName || 'Member',
-    //       image: userData?.photoURL || userData?.image || '',
-    //     };
-
-    //     // Create free membership booking
-    //     const bookingData = {
-    //       clubId: clubId,
-    //       name: club.name,
-    //       image: club.image,
-    //       category: club.category,
-    //       price: 0,
-    //       quantity: 1,
-    //       status: 'confirmed',
-    //       customer: customerInfo,
-    //       seller: club.seller || {},
-    //       createdAt: new Date(),
-    //       isFreeMembership: true,
-    //     };
-
-    //     const result = await bookingCollection.insertOne(bookingData);
-
-    //     res.send({
-    //       success: true,
-    //       message: 'Successfully joined the club for free!',
-    //       bookingId: result.insertedId,
-    //     });
-    //   } catch (error) {
-    //     console.error('Error joining free club:', error);
-    //     res.status(500).send({ message: 'Server error', error: error.message });
-    //   }
-    // });
-
-    
     // POST /clubs/:id/join - Free club instant join
     app.post('/clubs/:id/join', verifyJWT, async (req, res) => {
       try {
